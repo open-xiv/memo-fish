@@ -1,6 +1,6 @@
 # memo-fish
 
-Crowdsourced 5-float ingest service. Accepts `POST /ingest` with a 5-element f32 vector, appends server-stamped JSON lines to a daily file on a Fly Volume, and serves the day's NDJSON back via `GET /download/:date`.
+Crowdsourced positional-record ingest service. Accepts `POST /ingest` with one `{id, x, y, z, r}` sample, appends server-stamped JSON lines to a daily file on a Fly Volume, and serves the day's NDJSON back via `GET /download/:date`.
 
 Standards: [`memo-docs/standards/observability.md`](../memo-docs/standards/observability.md) for log shape, [`memo-docs/standards/secrets.md`](../memo-docs/standards/secrets.md) for env-var conventions, [`memo-docs/standards/code-style.md`](../memo-docs/standards/code-style.md) for commenting.
 
@@ -15,7 +15,7 @@ Standards: [`memo-docs/standards/observability.md`](../memo-docs/standards/obser
 | GET  | `/status/ready` | public `:8080` | none | readiness probe |
 | GET  | `/metrics` | mesh0 `10.66.0.4:9091` | none | Prometheus text format |
 
-`/ingest` accepts JSON `{"v":[f32; 5]}`. The server stamps `ts` (unix millis, UTC) and appends `{"ts":<i64>,"v":[f32; 5]}\n` to the current day's file. Channel back-pressure surfaces as `429`; channel closed (writer dead) surfaces as `503`.
+`/ingest` accepts JSON `{"id":u16,"x":f32,"y":f32,"z":f32,"r":f32}`. `id` outside `0..=65535` is rejected as `400` at parse time. The server stamps `ts` (unix millis, UTC) and appends `{"ts":<i64>,"id":<u16>,"x":<f32>,"y":<f32>,"z":<f32>,"r":<f32>}\n` to the current day's file. `serde_json` keeps f32 as f32 on the wire, so the on-disk form is the shortest round-trippable representation (e.g. `1.234`, not `1.2339999675750732`). Channel back-pressure surfaces as `429`; channel closed (writer dead) surfaces as `503`.
 
 `/download/:date` returns `application/x-ndjson`. `:date` must match `YYYY-MM-DD` literally. Missing file is `404`. Files older than `MEMO_FISH_RETENTION_DAYS` have been pruned and will 404.
 
@@ -27,7 +27,7 @@ cargo run
 curl -X POST http://127.0.0.1:8080/ingest \
   -H 'content-type: application/json' \
   -H "x-auth-key: ${MEMO_FISH_INGEST_KEY}" \
-  -d '{"v":[1.0,2.0,3.0,4.0,5.0]}'
+  -d '{"id":42,"x":1.234,"y":-5.678,"z":0.0,"r":3.14}'
 
 curl http://127.0.0.1:8080/download/$(date -u +%F) \
   -H "x-auth-key: ${MEMO_FISH_DOWNLOAD_KEY}" -o today.jsonl
@@ -57,7 +57,7 @@ Adding memo-fish to mesh0 requires the 4-peer expansion in memo-ops (droplet-us 
 
 ## Capacity
 
-5 GB volume + 7-day retention = ~700 MB/day budget. At ~70 bytes/record (`{"ts":1715900000000,"v":[1.0,2.0,3.0,4.0,5.0]}\n`) that's ~10M records/day, ~115 records/sec sustained. Single machine, no horizontal scale (volume is single-attached).
+5 GB volume + 7-day retention = ~700 MB/day budget. At ~75 bytes/record (`{"ts":1715900000000,"id":42,"x":1.234,"y":-5.678,"z":0.0,"r":3.14}\n`) that's ~9M records/day, ~110 records/sec sustained — short fields and 3-decimal-ish f32s stay within that. Single machine, no horizontal scale (volume is single-attached).
 
 ## Archival
 

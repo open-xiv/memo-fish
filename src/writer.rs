@@ -15,14 +15,28 @@ const FLUSH_INTERVAL: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Deserialize)]
 pub struct Incoming {
-    pub v: [f32; 5],
+    /// caller-supplied identifier. u16 so serde rejects negative / >65535 at parse
+    /// time, before the record enters the channel.
+    pub id: u16,
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+    pub r: f32,
 }
 
 #[derive(Debug, Serialize)]
 pub struct Record {
     /// unix millis, UTC, server-stamped at /ingest enqueue time.
     pub ts: i64,
-    pub v: [f32; 5],
+    pub id: u16,
+    // f32 fields stay f32 on the wire: serde_json uses ryu_f32 for f32 and emits the
+    // shortest round-trippable form (e.g. 1.234), so no fixed-point rounding is needed
+    // to keep the file tidy. promoting any of these to f64 would re-introduce the
+    // 1.2339999675750732 stretch and bloat each line by ~40 bytes.
+    pub x: f32,
+    pub y: f32,
+    pub z: f32,
+    pub r: f32,
 }
 
 /// counters and liveness exposed to /status + /metrics. writer updates these from one

@@ -20,7 +20,11 @@ pub async fn ingest(
     }
     let rec = Record {
         ts: Utc::now().timestamp_millis(),
-        v: p.v,
+        id: p.id,
+        x: p.x,
+        y: p.y,
+        z: p.z,
+        r: p.r,
     };
     match state.tx.try_send(rec) {
         Ok(_) => StatusCode::ACCEPTED,
