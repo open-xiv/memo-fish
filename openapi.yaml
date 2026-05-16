@@ -1,0 +1,315 @@
+openapi: 3.1.0
+info:
+  title: memo-fish API
+  description: |
+    Public 5-tuple ingest service. Accepts one `{id, x, y, z, r}` sample per
+    POST and appends a server-stamped JSON line to a daily NDJSON file on a
+    Fly Volume; serves the day's file back via GET. Single fly machine in
+    `nrt`, single-attached volume, no horizontal scale.
+
+    Two listeners:
+      - public `:8080` (https://memo-fish.fly.dev) — ingest, download, status
+      - mesh0 `10.66.0.4:9091` — metrics (Prometheus on droplet-us only)
+
+    Auth: `/ingest` and `/download/:date` require an `X-Auth-Key` header
+    (constant-time compared with `subtle::ConstantTimeEq`). `/status*` and
+    `/metrics` are unauthenticated.
+  version: 1.0.0
+
+servers:
+  - url: https://memo-fish.fly.dev
+    description: Public listener — ingest / download / status
+  - url: http://10.66.0.4:9091
+    description: mesh0 overlay — metrics (reachable from WG peers only)
+
+tags:
+  - name: ingest
+  - name: download
+  - name: status
+
+paths:
+  # ── Ingest ──
+  /ingest:
+    post:
+      tags: [ingest]
+      summary: Enqueue one record
+      description: |
+        Validates the JSON body, server-stamps `ts` (unix millis, UTC), and
+        non-blockingly pushes onto the writer channel. The writer batches
+        (32 KiB or 5 s) and fsyncs on rotate / periodic flush.
+
+        Response is always an empty body; the status code carries the result.
+        `id` outside `0..=65535` is rejected at parse time as `422`.
+      operationId: ingest
+      parameters:
+        - $ref: "#/components/parameters/AuthKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Incoming"
+            examples:
+              sample:
+                value:
+                  id: 42
+                  x: 1.234
+                  y: -5.678
+                  z: 0.0
+                  r: 3.14
+      responses:
+        "202":
+          description: Accepted into the writer channel
+        "401":
+          description: Missing or wrong `X-Auth-Key`
+        "422":
+          description: JSON did not match `Incoming` (missing field / wrong type / `id` out of u16 range)
+        "429":
+          description: Writer channel full (~10k pending). Client should back off.
+        "503":
+          description: Writer channel closed (writer task died). Operator should investigate.
+
+  # ── Download ──
+  /download/{date}:
+    get:
+      tags: [download]
+      summary: Stream a day's NDJSON
+      description: |
+        Returns `application/x-ndjson` with one `Record` per line. Files older
+        than `MEMO_FISH_RETENTION_DAYS` (default 7) have been pruned and 404.
+      operationId: download
+      parameters:
+        - $ref: "#/components/parameters/AuthKey"
+        - name: date
+          in: path
+          required: true
+          description: UTC date in `YYYY-MM-DD`.
+          schema:
+            type: string
+            pattern: "^\\d{4}-\\d{2}-\\d{2}$"
+            example: "2026-05-16"
+      responses:
+        "200":
+          description: The day's file
+          content:
+            application/x-ndjson:
+              schema:
+                type: string
+                description: One JSON-serialized `Record` per line.
+                example: |
+                  {"ts":1778941615628,"id":42,"x":1.234,"y":-5.678,"z":0.0,"r":3.14}
+                  {"ts":1778941616041,"id":7,"x":0.001,"y":100000.0,"z":-1.5,"r":0.5}
+        "400":
+          description: "`date` is not `YYYY-MM-DD`"
+        "401":
+          description: Missing or wrong `X-Auth-Key`
+        "404":
+          description: No file for that date (never written, or pruned by retention)
+        "500":
+          description: Read failed for a reason other than NotFound
+
+  # ── Status ──
+  /status:
+    get:
+      tags: [status]
+      summary: Health snapshot
+      description: |
+        Two checks, both critical: `writer` (process tick freshness against
+        `WEDGED_THRESHOLD = 30s`) and `volume` (statvfs free bytes against
+        `MIN_VOLUME_FREE_BYTES = 256 MiB`). Returns 503 with the same body
+        shape when either fails.
+      operationId: getStatus
+      responses:
+        "200":
+          description: All checks pass
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthSnapshot"
+        "503":
+          description: One or more checks failing
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthSnapshot"
+
+  /status/live:
+    get:
+      tags: [status]
+      summary: Liveness probe
+      description: |
+        Returns 200 iff the process can answer HTTP. No dependency checks —
+        a fly healthcheck failure here means the machine should be restarted.
+      operationId: getStatusLive
+      responses:
+        "200":
+          description: Process is alive
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+
+  /status/ready:
+    get:
+      tags: [status]
+      summary: Readiness probe
+      description: |
+        Returns 200 iff `writer` and `volume` checks both pass right now.
+        Boolean-shaped body for scrapers that don't need the detail.
+      operationId: getStatusReady
+      responses:
+        "200":
+          description: Ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+        "503":
+          description: Not ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusResponse"
+
+  # ── Metrics (mesh0 listener only) ──
+  /metrics:
+    get:
+      tags: [status]
+      summary: Prometheus metrics
+      description: |
+        Hand-rolled text-exposition output (no `prometheus` crate dep). Carries
+        `service` / `version` / `build` / `env` labels on every series. Bound
+        only on the mesh0 listener (`10.66.0.4:9091`) — call against the
+        second server URL.
+
+        Series: `fish_uptime_seconds`, `fish_records_written_total`,
+        `fish_write_errors_total`, `fish_queue_depth`, `fish_queue_capacity`,
+        `fish_volume_bytes_free`, `fish_writer_last_tick_age_ms`.
+      operationId: getMetrics
+      responses:
+        "200":
+          description: OK
+          content:
+            text/plain:
+              schema:
+                type: string
+
+components:
+  parameters:
+    AuthKey:
+      name: X-Auth-Key
+      in: header
+      required: true
+      description: |
+        App-auth token. Constant-time compared. Two separate values are
+        provisioned: `MEMO_FISH_INGEST_KEY` for `/ingest`,
+        `MEMO_FISH_DOWNLOAD_KEY` for `/download/:date`.
+      schema:
+        type: string
+        minLength: 1
+
+  schemas:
+    Incoming:
+      type: object
+      required: [id, x, y, z, r]
+      properties:
+        id:
+          type: integer
+          minimum: 0
+          maximum: 65535
+          description: u16. Serde rejects out-of-range values at parse time.
+        x:
+          type: number
+          format: float
+        y:
+          type: number
+          format: float
+        z:
+          type: number
+          format: float
+        r:
+          type: number
+          format: float
+
+    Record:
+      type: object
+      required: [ts, id, x, y, z, r]
+      description: |
+        On-disk shape (one per NDJSON line). f32 fields stay f32 — `serde_json`
+        uses `ryu_f32`, emitting the shortest round-trippable form (e.g.
+        `1.234`, not `1.2339999675750732`).
+      properties:
+        ts:
+          type: integer
+          format: int64
+          description: Server-stamped unix milliseconds, UTC.
+        id:
+          type: integer
+          minimum: 0
+          maximum: 65535
+        x:
+          type: number
+          format: float
+        y:
+          type: number
+          format: float
+        z:
+          type: number
+          format: float
+        r:
+          type: number
+          format: float
+
+    StatusResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok, down]
+
+    HealthCheck:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+        latency_ms:
+          type: integer
+          format: int64
+          description: |
+            On `writer`: ms since the writer task's last loop tick.
+            On `volume`: omitted (statvfs is sync and cheap; no observed latency).
+        error:
+          type: string
+
+    HealthSnapshot:
+      type: object
+      required: [service, version, build, env, started_at, uptime_seconds, status, checks]
+      properties:
+        service:
+          type: string
+        version:
+          type: string
+        build:
+          type: string
+        env:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        uptime_seconds:
+          type: integer
+          format: int64
+        status:
+          type: string
+          enum: [ok, down]
+        checks:
+          type: object
+          description: Two keys, both critical.
+          required: [writer, volume]
+          properties:
+            writer:
+              $ref: "#/components/schemas/HealthCheck"
+            volume:
+              $ref: "#/components/schemas/HealthCheck"

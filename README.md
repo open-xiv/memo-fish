@@ -2,7 +2,7 @@
 
 Crowdsourced positional-record ingest service. Accepts `POST /ingest` with one `{id, x, y, z, r}` sample, appends server-stamped JSON lines to a daily file on a Fly Volume, and serves the day's NDJSON back via `GET /download/:date`.
 
-Standards: [`memo-docs/standards/observability.md`](../memo-docs/standards/observability.md) for log shape, [`memo-docs/standards/secrets.md`](../memo-docs/standards/secrets.md) for env-var conventions, [`memo-docs/standards/code-style.md`](../memo-docs/standards/code-style.md) for commenting.
+Full API contract: [`openapi.yaml`](openapi.yaml). Standards: [`memo-docs/standards/observability.md`](../memo-docs/standards/observability.md) for log shape, [`memo-docs/standards/secrets.md`](../memo-docs/standards/secrets.md) for env-var conventions, [`memo-docs/standards/code-style.md`](../memo-docs/standards/code-style.md) for commenting.
 
 ## Endpoints
 
