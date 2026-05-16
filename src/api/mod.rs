@@ -59,8 +59,6 @@ pub async fn serve_metrics(
     Ok(())
 }
 
-/// returns free bytes on the filesystem hosting `path`. used by /status and /metrics.
-/// errors propagate up so the caller can decide whether to surface them or count as 0.
 pub fn volume_free_bytes(path: &Path) -> std::io::Result<u64> {
     use std::ffi::CString;
     use std::os::unix::ffi::OsStrExt;
@@ -71,6 +69,5 @@ pub fn volume_free_bytes(path: &Path) -> std::io::Result<u64> {
     if rc != 0 {
         return Err(std::io::Error::last_os_error());
     }
-    // f_bavail is blocks available to non-root; multiply by fragment size.
     Ok((s.f_bavail as u64).saturating_mul(s.f_frsize as u64))
 }

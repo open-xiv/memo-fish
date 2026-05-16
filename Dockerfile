@@ -11,15 +11,11 @@ RUN mkdir -p src && echo 'fn main() {}' > src/main.rs && cargo build --release &
 COPY src ./src
 RUN touch src/main.rs && cargo build --release
 
-# boringtun (Cloudflare's userspace WG, Rust). fly machines share the host kernel
-# so there's no wireguard kmod; userspace is the only option.
 FROM rust:1.95-slim-bookworm AS boringtun
 RUN cargo install boringtun-cli --version 0.7.* --locked
 
 FROM debian:bookworm-slim
 
-# baked-in identity for /status + JSON log fields per memo-docs/standards/observability.md.
-# CI passes these as --build-arg; buildinfo.rs reads them via env at startup.
 ARG MEMO_VERSION=dev
 ARG MEMO_BUILD=unknown
 ENV MEMO_VERSION=${MEMO_VERSION} \

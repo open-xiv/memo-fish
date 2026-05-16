@@ -12,11 +12,10 @@ use tokio::time::interval;
 
 const BATCH_BYTES: usize = 32 * 1024;
 const FLUSH_INTERVAL: Duration = Duration::from_secs(5);
+pub const WEDGED_THRESHOLD: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Deserialize)]
 pub struct Incoming {
-    /// caller-supplied identifier. u16 so serde rejects negative / >65535 at parse
-    /// time, before the record enters the channel.
     pub id: u16,
     pub x: f32,
     pub y: f32,
@@ -26,27 +25,20 @@ pub struct Incoming {
 
 #[derive(Debug, Serialize)]
 pub struct Record {
-    /// unix millis, UTC, server-stamped at /ingest enqueue time.
     pub ts: i64,
     pub id: u16,
-    // f32 fields stay f32 on the wire: serde_json uses ryu_f32 for f32 and emits the
-    // shortest round-trippable form (e.g. 1.234), so no fixed-point rounding is needed
-    // to keep the file tidy. promoting any of these to f64 would re-introduce the
-    // 1.2339999675750732 stretch and bloat each line by ~40 bytes.
+    // keep these f32 on the wire. serde_json uses ryu_f32 for f32 and emits the shortest
+    // round-trippable form (1.234); promoting to f64 re-introduces the 1.2339999675750732
+    // stretch and bloats each line by ~40 bytes.
     pub x: f32,
     pub y: f32,
     pub z: f32,
     pub r: f32,
 }
 
-/// counters and liveness exposed to /status + /metrics. writer updates these from one
-/// task; readers (axum handlers) read them with relaxed ordering — exact-instant
-/// freshness is not required for monitoring.
 pub struct WriterMetrics {
     pub records_written: AtomicU64,
     pub write_errors: AtomicU64,
-    /// unix millis of the writer's last loop tick. /status/ready considers the writer
-    /// wedged if this is older than WEDGED_THRESHOLD.
     pub last_tick_ms: AtomicI64,
 }
 
@@ -64,11 +56,6 @@ impl WriterMetrics {
             .store(Utc::now().timestamp_millis(), Ordering::Relaxed);
     }
 }
-
-/// the writer is considered wedged if it hasn't ticked for this long. tick happens on
-/// every channel receive AND on every 5s flush interval, so 30s without a tick implies
-/// the task is blocked or panicked.
-pub const WEDGED_THRESHOLD: Duration = Duration::from_secs(30);
 
 pub async fn run(
     mut rx: mpsc::Receiver<Record>,
@@ -93,7 +80,6 @@ pub async fn run(
             maybe = rx.recv() => {
                 metrics.tick();
                 let Some(rec) = maybe else {
-                    // tx side dropped — main is shutting down. final flush + fsync then exit.
                     flush(&mut file, &mut buf, true, &metrics).await;
                     tracing::info!(event = "writer.drained", "writer task exiting on channel close");
                     return;
@@ -147,10 +133,8 @@ async fn flush(
         return;
     }
     let Some(f) = file.as_mut() else {
-        // no file yet (first record before rotate completed) — keep buffered.
         return;
     };
-    // count records by counting newlines so a partial write is not double-counted.
     let lines = buf.iter().filter(|b| **b == b'\n').count() as u64;
     if let Err(e) = f.write_all(buf).await {
         tracing::error!(event = "write.failed", error = %e, bytes = buf.len(), "appending to day file failed");
@@ -175,9 +159,6 @@ async fn open_day(data_dir: &Path, date: NaiveDate) -> std::io::Result<File> {
         .await
 }
 
-/// removes data-YYYY-MM-DD.jsonl files whose date is strictly older than retention_days.
-/// today's file is never touched. errors are logged at warn and otherwise ignored — the
-/// next rotation will retry.
 async fn prune_old(data_dir: &Path, retention_days: u32) {
     let cutoff = Utc::now().date_naive() - chrono::Days::new(retention_days as u64);
     let mut rd = match tokio::fs::read_dir(data_dir).await {
@@ -200,7 +181,6 @@ async fn prune_old(data_dir: &Path, retention_days: u32) {
     }
 }
 
-/// "data-2026-05-16.jsonl" -> Some(2026-05-16); anything else -> None.
 fn parse_day_filename(name: &str) -> Option<NaiveDate> {
     let stem = name.strip_prefix("data-")?.strip_suffix(".jsonl")?;
     NaiveDate::parse_from_str(stem, "%Y-%m-%d").ok()

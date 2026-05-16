@@ -69,9 +69,8 @@ async fn main() -> Result<()> {
         )))
     };
 
-    // drop the local handle so only the two router-held copies (and writer-held tx) remain;
-    // once both servers exit, the only path to keep the tx alive is through the writer's
-    // own pair, which is its rx, not a tx — so writer's rx.recv() will see channel close.
+    // drop the local AppState clone so the channel closes after the listeners exit;
+    // writer's rx.recv() then returns None and the writer drains its final batch.
     drop(state);
 
     shutdown::wait_for_signal().await;

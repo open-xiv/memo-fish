@@ -7,7 +7,6 @@ pub struct Config {
     pub memo_env: Env,
     pub data_dir: PathBuf,
     pub public_bind: String,
-    /// empty means "do not start the metrics listener" — useful for local dev without WG.
     pub metrics_bind: String,
     pub queue_cap: usize,
     pub retention_days: u32,

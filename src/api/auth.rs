@@ -1,8 +1,6 @@
 use axum::http::HeaderMap;
 use subtle::ConstantTimeEq;
 
-/// constant-time compare of the X-Auth-Key header against the expected key.
-/// matches memo-server's middleware/auth.go shape — same header name, same primitive.
 pub fn check_key(headers: &HeaderMap, expected: &str) -> bool {
     let provided = headers
         .get("x-auth-key")

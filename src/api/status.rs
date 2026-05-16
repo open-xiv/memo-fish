@@ -13,9 +13,6 @@ use crate::buildinfo;
 use crate::writer::WEDGED_THRESHOLD;
 use crate::AppState;
 
-/// minimum free bytes on /data before the volume check trips. picked to give the
-/// 7-day retention pruner a chance to free space at the next rotation while still
-/// flagging "you're about to run out" before writes start failing.
 const MIN_VOLUME_FREE_BYTES: u64 = 256 * 1024 * 1024;
 
 #[derive(Serialize)]

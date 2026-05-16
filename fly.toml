@@ -1,14 +1,5 @@
-# memo-fish — public 5-float ingest, single-machine, single-attached volume.
-#
-# DO NOT scale to multiple machines. the volume is single-attached and a second
-# writer would split the day's data across machines. fly.toml deliberately omits
-# any [http_service.concurrency] or autoscale knob that could spawn a second
-# instance; `flyctl scale count` requests must stay at 1.
-#
-# /metrics binds on the mesh0 overlay (10.66.0.4:9091) and is reachable only
-# from prometheus on droplet-us via WG. the public listener (0.0.0.0:8080)
-# carries ingest, download, status. /status* is unauthenticated per
-# memo-docs/standards/observability.md; /ingest and /download require X-Auth-Key.
+# DO NOT scale to multiple machines: volume is single-attached; a second writer
+# would split the day's data across machines. keep `fly scale count` at 1.
 
 app            = "memo-fish"
 primary_region = "nrt"
@@ -44,7 +35,5 @@ primary_region = "nrt"
     path         = "/status/live"
 
 [[vm]]
-  # starting at 512mb to give boringtun + axum + writer buffer headroom on first
-  # rollout; once we have two weeks of RSS data we can try shared-cpu-1x@256mb.
   size   = "shared-cpu-1x"
   memory = "512mb"

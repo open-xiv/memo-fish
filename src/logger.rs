@@ -3,9 +3,6 @@ use crate::config::{Config, Env};
 use tracing::Span;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-/// initializes the global subscriber and returns a never-exited root span that carries
-/// the baked-in `service` / `version` / `build` / `env` fields. caller should `.entered()`
-/// the returned span at the start of `main` and keep the guard alive for the run.
 pub fn init(cfg: &Config) -> Span {
     let filter = EnvFilter::try_from_env("LOG_LEVEL")
         .or_else(|_| EnvFilter::try_from_default_env())

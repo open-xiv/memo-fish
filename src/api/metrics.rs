@@ -9,8 +9,6 @@ use chrono::Utc;
 use crate::buildinfo;
 use crate::AppState;
 
-/// minimal prometheus text exposition; the metric set is small and fixed so we emit
-/// the format by hand rather than depend on the `prometheus` crate.
 pub async fn metrics(State(state): State<AppState>) -> (HeaderMap, String) {
     let mut buf = String::with_capacity(2048);
     let labels = format!(

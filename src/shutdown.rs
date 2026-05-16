@@ -1,8 +1,6 @@
 use tokio::signal;
 use tokio::sync::broadcast;
 
-/// fan-out shutdown signal. main subscribes once per long-lived task; each task should
-/// race its own work against `rx.recv()` and exit cleanly when the signal fires.
 #[derive(Clone)]
 pub struct Shutdown(pub broadcast::Sender<()>);
 
@@ -21,7 +19,6 @@ impl Shutdown {
     }
 }
 
-/// resolves when the process should begin draining. SIGTERM (fly stop), SIGINT (ctrl-c).
 pub async fn wait_for_signal() {
     let ctrl_c = async {
         let _ = signal::ctrl_c().await;
