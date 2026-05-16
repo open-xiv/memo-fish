@@ -1,0 +1,111 @@
+name: Build & deploy
+
+# push to main: build a new image and roll the fly machine.
+# unlike memo-grapher (a one-shot job we deliberately don't auto-start),
+# memo-fish is a long-running service so we want main pushes to deploy.
+on:
+    push:
+        branches:
+            - main
+    workflow_dispatch:
+
+env:
+    REGISTRY: ghcr.io
+    IMAGE_NAME: open-xiv/memo-fish
+    FLY_APP: memo-fish
+
+jobs:
+    build:
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            packages: write
+        outputs:
+            version: ${{ steps.version.outputs.version }}
+            build:   ${{ steps.version.outputs.build }}
+            image:   ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+
+        steps:
+            - name: Checkout repo
+              uses: actions/checkout@v6
+              with:
+                  fetch-depth: 0
+
+            - name: Compute version
+              id: version
+              run: |
+                  raw=$(git describe --tags --always 2>/dev/null || echo "${GITHUB_SHA::7}")
+                  case "$raw" in
+                    *-g*) base=${raw%-g*}; n=${base##*-}; tag=${base%-*}; pretty="${tag}-${n}" ;;
+                    *)    pretty="$raw" ;;
+                  esac
+                  echo "version=$pretty"        >> "$GITHUB_OUTPUT"
+                  echo "build=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+            - name: Set up Docker Buildx
+              uses: docker/setup-buildx-action@v4
+
+            - name: Login to GHCR
+              uses: docker/login-action@v4
+              with:
+                  registry: ${{ env.REGISTRY }}
+                  username: ${{ github.actor }}
+                  password: ${{ secrets.GITHUB_TOKEN }}
+
+            - name: Build & push image
+              uses: docker/build-push-action@v7
+              with:
+                  context: .
+                  push: true
+                  tags: |
+                      ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+                      ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
+                      ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ github.sha }}
+                  build-args: |
+                      MEMO_VERSION=${{ steps.version.outputs.version }}
+                      MEMO_BUILD=${{ steps.version.outputs.build }}
+                  cache-from: type=gha
+                  cache-to: type=gha,mode=max
+                  platforms: linux/amd64
+
+    deploy:
+        needs: build
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout repo
+              uses: actions/checkout@v6
+
+            - name: Setup flyctl
+              uses: superfly/flyctl-actions/setup-flyctl@master
+
+            - name: Deploy to fly
+              env:
+                  FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+              run: |
+                  flyctl deploy \
+                      --app "${{ env.FLY_APP }}" \
+                      --image "${{ needs.build.outputs.image }}" \
+                      --strategy immediate
+
+    notify:
+        needs: [build, deploy]
+        if: always()
+        runs-on: ubuntu-latest
+        steps:
+            - name: Compute status
+              id: s
+              run: |
+                  if [[ "${{ needs.build.result }}" == "success" && "${{ needs.deploy.result }}" == "success" ]]; then
+                    echo "status=success" >> "$GITHUB_OUTPUT"
+                  else
+                    echo "status=failure" >> "$GITHUB_OUTPUT"
+                  fi
+            - uses: open-xiv/gha-actions/notify-deploy@v1
+              with:
+                  status:        ${{ steps.s.outputs.status }}
+                  service:       memo-fish
+                  kind:          deploy
+                  version:       ${{ needs.build.outputs.version }}
+                  cluster:       fly-nrt
+                  build:         ${{ needs.build.result }}
+                  webhook_token: ${{ secrets.GHA_WEBHOOK_TOKEN }}
