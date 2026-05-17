@@ -8,6 +8,7 @@ mod api;
 mod buildinfo;
 mod config;
 mod logger;
+mod rewriter;
 mod shutdown;
 mod writer;
 

@@ -1,5 +1,6 @@
 use crate::buildinfo;
 use crate::config::{Config, Env};
+use crate::rewriter::Rewriting;
 use tracing::Span;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
@@ -21,12 +22,15 @@ pub fn init(cfg: &Config) -> (Span, Option<WorkerGuard>) {
 
     match cfg.memo_env {
         Env::Prod => {
+            // The stdout JSON layer goes through Rewriting so `timestamp` /
+            // `message` come out as `ts` / `msg` per the observability spec.
             let stdout_layer = fmt::layer()
                 .json()
                 .flatten_event(true)
                 .with_target(false)
                 .with_current_span(true)
-                .with_span_list(false);
+                .with_span_list(false)
+                .with_writer(Rewriting(std::io::stdout));
 
             let file_layer = std::env::var("MEMO_FISH_LOG_DIR").ok().map(|dir| {
                 std::fs::create_dir_all(&dir).expect("create MEMO_FISH_LOG_DIR");
@@ -45,7 +49,7 @@ pub fn init(cfg: &Config) -> (Span, Option<WorkerGuard>) {
                     .with_target(false)
                     .with_current_span(true)
                     .with_span_list(false)
-                    .with_writer(nb)
+                    .with_writer(Rewriting(nb))
             });
 
             tracing_subscriber::registry()
