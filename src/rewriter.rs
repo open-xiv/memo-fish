@@ -58,6 +58,15 @@ impl<W: Write> Write for Rewriter<W> {
                     if let Some(msg) = m.remove("message") {
                         m.insert("msg".into(), msg);
                     }
+                    // tracing-subscriber emits `INFO`/`WARN`/etc; the spec
+                    // says lowercase to match zerolog. Cheaper to lowercase
+                    // in place here than to write a custom event formatter.
+                    if let Some(level) = m.get_mut("level") {
+                        if let Some(s) = level.as_str() {
+                            let lower = s.to_ascii_lowercase();
+                            *level = serde_json::Value::String(lower);
+                        }
+                    }
                 }
                 serde_json::to_writer(&mut self.inner, &v)?;
                 self.inner.write_all(b"\n")?;
