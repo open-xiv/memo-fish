@@ -1,10 +1,10 @@
-# memo-fish
+## memo-fish
 
 Crowdsourced positional-record ingest service. Accepts `POST /ingest` with one `{id, x, y, z, r}` sample, appends server-stamped JSON lines to a daily file on a Fly Volume, and serves the day's NDJSON back via `GET /download/:date`.
 
 Full API contract: [`openapi.yaml`](openapi.yaml). Standards: [`memo-docs/standards/observability.md`](../memo-docs/standards/observability.md) for log shape, [`memo-docs/standards/secrets.md`](../memo-docs/standards/secrets.md) for env-var conventions, [`memo-docs/standards/code-style.md`](../memo-docs/standards/code-style.md) for commenting.
 
-## Endpoints
+### Endpoints
 
 | method | path | network | auth | purpose |
 |---|---|---|---|---|
@@ -19,11 +19,11 @@ Full API contract: [`openapi.yaml`](openapi.yaml). Standards: [`memo-docs/standa
 
 `/download/:date` returns `application/x-ndjson`. `:date` must match `YYYY-MM-DD` literally. Missing file is `404`. Files older than `MEMO_FISH_RETENTION_DAYS` have been pruned and will 404.
 
-## Local dev
+### Local dev
 
 ```bash
 cargo run
-# in another shell
+## in another shell
 curl -X POST http://127.0.0.1:8080/ingest \
   -H 'content-type: application/json' \
   -H "x-auth-key: ${MEMO_FISH_INGEST_KEY}" \
@@ -35,7 +35,7 @@ curl http://127.0.0.1:8080/download/$(date -u +%F) \
 
 Set `MEMO_FISH_METRICS_BIND=""` for local dev so the service skips the mesh0 listener.
 
-## Deploy
+### Deploy
 
 CI on push to `main` builds & pushes `ghcr.io/open-xiv/memo-fish:sha-<sha>` then runs `flyctl deploy --image ...` on app `memo-fish` (region `nrt`, `shared-cpu-1x` 512 MB, 5 GB volume mounted at `/data`).
 
@@ -55,10 +55,10 @@ fly deploy
 
 Adding memo-fish to mesh0 requires the 4-peer expansion in memo-ops (droplet-us and droplet-hk each get a new `[Peer]` entry for `10.66.0.4`). The mesh0 listener will fail to bind until that is rolled out.
 
-## Capacity
+### Capacity
 
 5 GB volume + 7-day retention = ~700 MB/day budget. At ~75 bytes/record (`{"ts":1715900000000,"id":42,"x":1.234,"y":-5.678,"z":0.0,"r":3.14}\n`) that's ~9M records/day, ~110 records/sec sustained — short fields and 3-decimal-ish f32s stay within that. Single machine, no horizontal scale (volume is single-attached).
 
-## Archival
+### Archival
 
 Out of repo. The download endpoint is public + auth-keyed, so any external mover can pull `GET /download/<yesterday-utc>` on its own schedule and stash the result. If the puller stays offline longer than `MEMO_FISH_RETENTION_DAYS`, that data is gone.
