@@ -26,7 +26,7 @@ pub struct AppState {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cfg = config::Config::from_env()?;
-    let root_span = logger::init(&cfg);
+    let (root_span, _log_file_guard) = logger::init(&cfg);
     let _root_guard = root_span.entered();
     let _ = buildinfo::started_at();
 

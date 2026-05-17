@@ -1,0 +1,58 @@
+// memo-fish in-container log shipper. tails the JSON log file the Rust
+// app writes via tracing-appender (controlled by MEMO_FISH_LOG_DIR), parses
+// each line as JSON, and pushes to droplet-us's Loki NodePort over mesh0.
+//
+// stdout is left untouched: fly.io's own log capture still works for
+// `flyctl logs`. this side path is what makes the records show up in
+// Grafana / Loki alongside the rest of the stack.
+
+logging {
+  level  = "warn"
+  format = "logfmt"
+}
+
+local.file_match "memo_fish" {
+  path_targets = [
+    { __path__ = "/var/log/memo-fish/app.*.log" },
+  ]
+}
+
+loki.source.file "memo_fish" {
+  targets    = local.file_match.memo_fish.targets
+  forward_to = [loki.process.label.receiver]
+
+  // tracing-appender's daily rotation renames `app.YYYY-MM-DD.log` and starts
+  // a new file. tell alloy to keep tailing across the rename rather than
+  // re-seeking from the beginning of the new file.
+  tail_from_end = true
+}
+
+// Promote `level` from the JSON payload to a stream label so Loki queries
+// can filter by it the same way they do for in-cluster pods. `service` is
+// set via external_labels on the write step rather than parsed per-line
+// because every record is from this one service by construction.
+loki.process "label" {
+  forward_to = [loki.write.netcup.receiver]
+
+  stage.json {
+    expressions = {
+      level = "level",
+    }
+  }
+  stage.labels {
+    values = {
+      level = "",
+    }
+  }
+}
+
+loki.write "netcup" {
+  endpoint {
+    url = "http://10.66.0.1:31100/loki/api/v1/push"
+  }
+  external_labels = {
+    cluster = "fly-nrt",
+    host    = "memo-fish",
+    service = "memo-fish",
+  }
+}

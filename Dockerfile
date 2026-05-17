@@ -21,14 +21,28 @@ ARG MEMO_BUILD=unknown
 ENV MEMO_VERSION=${MEMO_VERSION} \
     MEMO_BUILD=${MEMO_BUILD}
 
+# Pin alloy to the same version droplet-hk's memo-alloy and the k3s alloy
+# DaemonSet run, so behavior is identical across hosts.
+ARG ALLOY_VERSION=1.4.2
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates wireguard-tools iproute2 iptables \
+    ca-certificates wireguard-tools iproute2 iptables curl unzip \
+ && curl -fsSL -o /tmp/alloy.zip \
+      "https://github.com/grafana/alloy/releases/download/v${ALLOY_VERSION}/alloy-linux-amd64.zip" \
+ && unzip /tmp/alloy.zip -d /tmp \
+ && mv /tmp/alloy-linux-amd64 /usr/local/bin/alloy \
+ && chmod +x /usr/local/bin/alloy \
+ && rm /tmp/alloy.zip \
+ && apt-get purge -y curl unzip \
+ && apt-get autoremove -y \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder   /build/target/release/memo-fish     /usr/local/bin/memo-fish
 COPY --from=boringtun /usr/local/cargo/bin/boringtun-cli  /usr/local/bin/boringtun-cli
 COPY entrypoint.sh                                         /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
+COPY config.alloy                                          /etc/alloy/config.alloy
+RUN chmod +x /usr/local/bin/entrypoint.sh \
+ && mkdir -p /var/log/memo-fish /var/lib/alloy
 
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

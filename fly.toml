@@ -13,6 +13,11 @@ primary_region = "nrt"
   MEMO_FISH_METRICS_BIND = "10.66.0.4:9091"
   MEMO_FISH_QUEUE_CAP   = "10000"
   MEMO_FISH_RETENTION_DAYS = "7"
+  # Set MEMO_FISH_LOG_DIR to opt into the in-container alloy shipper. Lives
+  # on the root fs (NOT under [[mounts]]) so log files vanish on machine
+  # replacement, which is fine because alloy ships them out continuously.
+  # See memo-docs/standards/observability.md "Fly-platform log shipping".
+  MEMO_FISH_LOG_DIR     = "/var/log/memo-fish"
   LOG_LEVEL             = "info"
   RUST_LOG              = "info,memo_fish=info"
 
